@@ -28,3 +28,4 @@ A web application for booking counselling sessions with reminders via WhatsApp a
 - Fill in the booking form.
 - Submit to book the session.
 - Reminders will be sent at the scheduled time via WhatsApp (configure in Apps Script).
+# Counselling-App
