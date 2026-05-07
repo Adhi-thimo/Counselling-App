@@ -1,0 +1,16 @@
+{
+  "name": "Rol's Counselling",
+  "short_name": "Counselling",
+  "description": "Book counselling sessions and receive reminders",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#1976d2",
+  "icons": [
+    {
+      "src": "/vite.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml"
+    }
+  ]
+}
