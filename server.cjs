@@ -16,10 +16,10 @@ const APPS_SCRIPT_URL = Object.prototype.hasOwnProperty.call(process.env, 'APPS_
   ? process.env.APPS_SCRIPT_URL
   : DEFAULT_APPS_SCRIPT_URL;
 const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS || '';
-const GREEN_API_ID_INSTANCE = process.env.GREEN_API_ID_INSTANCE || '7107621450';
-const GREEN_API_TOKEN_INSTANCE = process.env.GREEN_API_TOKEN_INSTANCE || '58021b7de8f941558d5a2ef04878e4fa9ab4fd59203e4501a0';
+const GREEN_API_ID_INSTANCE = process.env.GREEN_API_ID_INSTANCE || '7107629494';
+const GREEN_API_TOKEN_INSTANCE = process.env.GREEN_API_TOKEN_INSTANCE || 'c92fd11ef0c2406f9d9d210a115bafdd75eaf2eb47fb40928f';
 const GREEN_API_BASE_URL = (process.env.GREEN_API_BASE_URL || 'https://api.green-api.com').replace(/\/$/, '');
-const COUNSELOR_CONTACT = process.env.COUNSELOR_CONTACT || '8867030490';
+const COUNSELOR_CONTACT = process.env.COUNSELOR_CONTACT || '8050045500';
 
 // Middleware
 app.use(bodyParser.json());
