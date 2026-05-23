@@ -22,3 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# whatsapp-web.js runtime data
+.wwebjs_auth/
+.wwebjs_cache/

@@ -1,3 +1,21 @@
+/* Fix for Material-UI label/placeholder overlap and input appearance */
+.MuiFormControl-root .MuiInputLabel-root {
+  background: #fff;
+  padding: 0 4px;
+  z-index: 1;
+}
+
+.MuiOutlinedInput-root input[type="date"],
+.MuiOutlinedInput-root input[type="time"] {
+  padding-top: 14.5px;
+  padding-bottom: 14.5px;
+}
+
+.MuiInputLabel-shrink {
+  transform: translate(14px, -9px) scale(0.75) !important;
+  background: #fff;
+  padding: 0 4px;
+}
 .counter {
   font-size: 16px;
   padding: 5px 10px;
