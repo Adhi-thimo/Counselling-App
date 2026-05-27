@@ -105,7 +105,11 @@ function App() {
       const response = await axios.get(bookingsApiUrl);
       setBookings(response.data?.bookings || []);
     } catch (error) {
-      setBookingsError(error.response?.data?.error || 'Failed to load bookings.');
+      const errData = error.response?.data?.error;
+      const errMsg = typeof errData === 'object' && errData !== null
+        ? (errData.message || JSON.stringify(errData))
+        : (errData || error.message || 'Failed to load bookings.');
+      setBookingsError(errMsg);
     } finally {
       setBookingsLoading(false);
     }
@@ -160,7 +164,11 @@ function App() {
         });
       }
     } catch (error) {
-      setMessage(error.response?.data?.error || 'Error booking session. Please try again.');
+      const errData = error.response?.data?.error;
+      const errMsg = typeof errData === 'object' && errData !== null
+        ? (errData.message || JSON.stringify(errData))
+        : (errData || error.message || 'Error booking session. Please try again.');
+      setMessage(errMsg);
     }
   };
 
@@ -499,10 +507,12 @@ function App() {
               )}
               {message && (
                 <Alert
-                  severity={message.includes('successful') ? 'success' : 'error'}
+                  severity={typeof message === 'string' && message.includes('successful') ? 'success' : 'error'}
                   sx={{ mt: 2, borderRadius: 2, fontSize: '0.9rem' }}
                 >
-                  {message}
+                  {typeof message === 'object' && message !== null
+                    ? (message.message || JSON.stringify(message))
+                    : String(message)}
                 </Alert>
               )}
             </CardContent>

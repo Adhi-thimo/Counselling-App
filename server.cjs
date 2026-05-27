@@ -226,13 +226,13 @@ const sendWhatsApp = async (to, body) => {
 // });
 
 const mapSheetRowToBooking = (row) => ({
-  name: row[0] || '',
-  contact: row[1] || '',
-  address: row[2] || '',
-  date: row[3] || '',
-  time: row[4] || '',
-  type: row[5] || '',
-  processedBy: row[6] || '',
+  name: row ? (row[0] || '') : '',
+  contact: row ? (row[1] || '') : '',
+  address: row ? (row[2] || '') : '',
+  date: row ? (row[3] || '') : '',
+  time: row ? (row[4] || '') : '',
+  type: row ? (row[5] || '') : '',
+  processedBy: row ? (row[6] || '') : '',
 });
 
 const normalizeDateValue = (value) => {
@@ -368,7 +368,8 @@ const handleBooking = async (req, res) => {
     //   .catch((err) => console.error('WhatsApp confirmation error:', err.message));
 
     // Schedule WhatsApp reminder 30 mins before appointment
-    const sessionDate = new Date(`${date}T${time}`);
+    // Force Indian Standard Time (UTC+05:30) timezone parsing since cloud servers run in UTC.
+    const sessionDate = new Date(`${date}T${time}:00+05:30`);
     const reminderDate = new Date(sessionDate.getTime() - 30 * 60 * 1000); // 30 mins before
     
     // Create a unique ID for this reminder
@@ -415,7 +416,10 @@ app.get('/api/bookings', async (req, res) => {
       });
 
       const rows = result.data.values || [];
-      const bookings = rows.map(mapSheetRowToBooking).reverse();
+      const bookings = rows
+        .map(mapSheetRowToBooking)
+        .filter((b) => b.name || b.contact)
+        .reverse();
 
       return res.status(200).json({
         success: true,
@@ -429,7 +433,7 @@ app.get('/api/bookings', async (req, res) => {
 
       for (const url of candidateUrls) {
         try {
-          const bookings = await fetchBookingsFromAppsScript(url);
+          const bookings = (await fetchBookingsFromAppsScript(url)).filter((b) => b.name || b.contact);
           return res.status(200).json({
             success: true,
             bookings,
