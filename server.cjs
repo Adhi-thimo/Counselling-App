@@ -457,18 +457,23 @@ app.get('/api/bookings', async (req, res) => {
   }
 });
 
-// Start Server
-app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+// Export the app for serverless deployments (like Vercel)
+module.exports = app;
 
-  setTimeout(() => {
-    console.log('\n📋 Checking for pending reminders from previous sessions...');
-    rescheduleAllReminders();
+// Start Server locally or on persistent environments (only if not running on Vercel)
+if (!process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`Server running on http://localhost:${PORT}`);
 
-    // Trial message to counselor on server start
-    console.log('\n📤 Sending trial WhatsApp message to counselor...');
-    sendWhatsApp(COUNSELOR_CONTACT, 'Trial message: Counselling App server is up and WhatsApp sending is working.')
-      .then(() => console.log('✓ Trial message sent to counselor.'))
-      .catch((err) => console.error('✗ Trial message failed:', err.message));
-  }, 2000);
-});
+    setTimeout(() => {
+      console.log('\n📋 Checking for pending reminders from previous sessions...');
+      rescheduleAllReminders();
+
+      // Trial message to counselor on server start
+      console.log('\n📤 Sending trial WhatsApp message to counselor...');
+      sendWhatsApp(COUNSELOR_CONTACT, 'Trial message: Counselling App server is up and WhatsApp sending is working.')
+        .then(() => console.log('✓ Trial message sent to counselor.'))
+        .catch((err) => console.error('✗ Trial message failed:', err.message));
+    }, 2000);
+  });
+}
