@@ -318,17 +318,25 @@ const handleBooking = async (req, res) => {
     let storageBackend = '';
 
     // Append data to Google Sheet
+    let synced = false;
     if (sheets) {
-      await sheets.spreadsheets.values.append({
-        spreadsheetId: SHEET_ID,
-        range: 'Sheet1!A:G',
-        valueInputOption: 'USER_ENTERED',
-        requestBody: {
-          values: [[name, contact, address, date, time, type, processedBy]],
-        },
-      });
-      storageBackend = 'google-sheets-service-account';
-    } else if (APPS_SCRIPT_URL) {
+      try {
+        await sheets.spreadsheets.values.append({
+          spreadsheetId: SHEET_ID,
+          range: 'Sheet1!A:G',
+          valueInputOption: 'USER_ENTERED',
+          requestBody: {
+            values: [[name, contact, address, date, time, type, processedBy]],
+          },
+        });
+        storageBackend = 'google-sheets-service-account';
+        synced = true;
+      } catch (sheetError) {
+        console.warn(`Direct Google Sheets append failed: ${sheetError.message}. Falling back to Apps Script...`);
+      }
+    }
+
+    if (!synced && APPS_SCRIPT_URL) {
       const appsScriptResponse = await fetch(APPS_SCRIPT_URL, {
         method: 'POST',
         headers: {
@@ -358,8 +366,11 @@ const handleBooking = async (req, res) => {
         throw new Error(parsedAppsScriptResponse?.message || 'Apps Script did not confirm storage success.');
       }
       storageBackend = 'google-apps-script';
-    } else {
-      throw new Error('No Google Sheet backend is configured.');
+      synced = true;
+    }
+
+    if (!synced) {
+      throw new Error('No Google Sheet backend is configured or all storage backends failed.');
     }
 
     // Disabled on request: do not send immediate WhatsApp confirmation on booking.
@@ -410,21 +421,25 @@ app.get('/api/whatsapp/status', (req, res) => {
 app.get('/api/bookings', async (req, res) => {
   try {
     if (sheets) {
-      const result = await sheets.spreadsheets.values.get({
-        spreadsheetId: SHEET_ID,
-        range: 'Sheet1!A2:G',
-      });
+      try {
+        const result = await sheets.spreadsheets.values.get({
+          spreadsheetId: SHEET_ID,
+          range: 'Sheet1!A2:G',
+        });
 
-      const rows = result.data.values || [];
-      const bookings = rows
-        .map(mapSheetRowToBooking)
-        .filter((b) => b.name || b.contact)
-        .reverse();
+        const rows = result.data.values || [];
+        const bookings = rows
+          .map(mapSheetRowToBooking)
+          .filter((b) => b.name || b.contact)
+          .reverse();
 
-      return res.status(200).json({
-        success: true,
-        bookings,
-      });
+        return res.status(200).json({
+          success: true,
+          bookings,
+        });
+      } catch (sheetError) {
+        console.warn(`Direct Google Sheets API failed: ${sheetError.message}. Falling back to Apps Script...`);
+      }
     }
 
     if (APPS_SCRIPT_URL) {
@@ -448,7 +463,7 @@ app.get('/api/bookings', async (req, res) => {
       throw lastError || new Error('Apps Script bookings read failed.');
     }
 
-    throw new Error('No Google Sheet backend is configured.');
+    throw new Error('No Google Sheet backend is configured or all storage backends failed.');
   } catch (error) {
     console.error(error);
     res.status(500).json({
