@@ -35,12 +35,93 @@ import {
   EventNote,
   Refresh,
   Send,
+  Edit,
 } from '@mui/icons-material';
 import axios from 'axios';
 
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
 const bookingApiUrl = `${apiBaseUrl}/api/book`;
 const bookingsApiUrl = `${apiBaseUrl}/api/bookings`;
+
+const to24HourTime = (value) => {
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
+
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    // Handle spreadsheet fractional time values (for example 0.75 => 18:00).
+    const fraction = value >= 0 && value <= 1 ? value : value % 1;
+    const totalMinutes = Math.round(fraction * 24 * 60);
+    const minutesInDay = ((totalMinutes % (24 * 60)) + (24 * 60)) % (24 * 60);
+    const hours = String(Math.floor(minutesInDay / 60)).padStart(2, '0');
+    const minutes = String(minutesInDay % 60).padStart(2, '0');
+    return `${hours}:${minutes}`;
+  }
+
+  const asString = String(value).trim();
+
+  if (!asString) {
+    return null;
+  }
+
+  const hhmm = asString.match(/^([01]?\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?$/);
+  if (hhmm) {
+    const hours = String(Number(hhmm[1])).padStart(2, '0');
+    return `${hours}:${hhmm[2]}`;
+  }
+
+  const ampm = asString.match(/^(\d{1,2}):([0-5]\d)(?::[0-5]\d)?\s*([AaPp]\.??\s*[Mm]\.?)$/i);
+  if (ampm) {
+    let hours = Number(ampm[1]);
+    const minutes = ampm[2];
+    const meridiem = ampm[3].replace(/\./g, '').replace(/\s+/g, '').toUpperCase();
+
+    if (hours === 12) {
+      hours = meridiem === 'AM' ? 0 : 12;
+    } else if (meridiem === 'PM') {
+      hours += 12;
+    }
+
+    return `${String(hours).padStart(2, '0')}:${minutes}`;
+  }
+
+  // Extract time from longer strings like "Sat Dec 30 1899 5:45 PM".
+  const embedded = asString.match(/(\d{1,2})[:.](\d{2})(?::(\d{2}))?\s*([AaPp]\.??\s*[Mm]\.?)?/);
+  if (embedded) {
+    let hours = Number(embedded[1]);
+    const minutes = Number(embedded[2]);
+    const meridiemRaw = embedded[4]
+      ? embedded[4].replace(/\./g, '').replace(/\s+/g, '').toUpperCase()
+      : '';
+
+    if (Number.isInteger(minutes) && minutes >= 0 && minutes < 60) {
+      if (meridiemRaw === 'AM' || meridiemRaw === 'PM') {
+        if (hours >= 1 && hours <= 12) {
+          if (hours === 12) {
+            hours = meridiemRaw === 'AM' ? 0 : 12;
+          } else if (meridiemRaw === 'PM') {
+            hours += 12;
+          }
+          return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+        }
+      } else if (hours >= 0 && hours < 24) {
+        return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+      }
+    }
+  }
+
+  const numeric = Number(asString);
+  if (Number.isFinite(numeric) && asString.match(/^\d+(\.\d+)?$/)) {
+    return to24HourTime(numeric);
+  }
+
+  return null;
+};
+
+const getTimePickerValue = (value) => {
+  const normalized = to24HourTime(value);
+  return normalized ? dayjs(`2000-01-01T${normalized}`) : null;
+};
 
 // Custom theme with calming colors
 const theme = createTheme({
@@ -96,6 +177,31 @@ function App() {
   const [bookings, setBookings] = useState([]);
   const [bookingsLoading, setBookingsLoading] = useState(false);
   const [bookingsError, setBookingsError] = useState('');
+  const [editingBooking, setEditingBooking] = useState(null);
+
+  const editApiUrl = `${apiBaseUrl}/api/edit`;
+
+  const handleEditClick = (booking) => {
+    const normalizedTime = to24HourTime(booking.time) || '';
+
+    setEditingBooking({
+      ...booking,
+      originalBooking: {
+        ...booking,
+      },
+    });
+    setFormData({
+      name: booking.name,
+      contact: booking.contact,
+      address: booking.address,
+      date: booking.date,
+      time: normalizedTime,
+      type: booking.type,
+      processedBy: booking.processedBy,
+    });
+    setActiveView('form');
+    setMessage('');
+  };
 
   const loadBookings = async () => {
     setBookingsLoading(true);
@@ -136,8 +242,23 @@ function App() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-      const response = await axios.post(bookingApiUrl, formData);
-      setMessage(response.data?.message || 'Booking successful! Reminder will be sent.');
+      let response;
+      const isEditing = Boolean(editingBooking);
+      if (isEditing) {
+        response = await axios.post(editApiUrl, {
+          bookingId: editingBooking.bookingId,
+          rowIndex: editingBooking.rowIndex,
+          source: editingBooking.source,
+          savedAt: editingBooking.savedAt,
+          originalBooking: editingBooking.originalBooking,
+          ...formData,
+        });
+        setMessage(response.data?.message || 'Booking updated successfully!');
+        setEditingBooking(null);
+      } else {
+        response = await axios.post(bookingApiUrl, formData);
+        setMessage(response.data?.message || 'Booking successful! Reminder will be sent.');
+      }
       setFormData({
         name: '',
         contact: '',
@@ -150,15 +271,20 @@ function App() {
       setActiveView('bookings');
       await loadBookings();
 
+      const notifTitle = isEditing ? 'Booking Updated' : 'Booking Confirmed';
+      const notifBody = isEditing
+        ? `Session for ${formData.name} updated for ${formData.date} at ${formData.time}.`
+        : `Your counselling session is booked for ${formData.date} at ${formData.time}.`;
+
       if ('Notification' in window && Notification.permission === 'granted') {
-        new Notification('Booking Confirmed', {
-          body: `Your counselling session is booked for ${formData.date} at ${formData.time}.`,
+        new Notification(notifTitle, {
+          body: notifBody,
         });
       } else if ('Notification' in window && Notification.permission !== 'denied') {
         Notification.requestPermission().then(permission => {
           if (permission === 'granted') {
-            new Notification('Booking Confirmed', {
-              body: `Your counselling session is booked for ${formData.date} at ${formData.time}.`,
+            new Notification(notifTitle, {
+              body: notifBody,
             });
           }
         });
@@ -167,7 +293,7 @@ function App() {
       const errData = error.response?.data?.error;
       const errMsg = typeof errData === 'object' && errData !== null
         ? (errData.message || JSON.stringify(errData))
-        : (errData || error.message || 'Error booking session. Please try again.');
+        : (errData || error.message || 'Error processing session. Please try again.');
       setMessage(errMsg);
     }
   };
@@ -259,15 +385,33 @@ function App() {
                   color="text.secondary"
                   sx={{ fontSize: { xs: '0.8rem', sm: '0.95rem' } }}
                 >
-                  {activeView === 'form' ? 'Book your counselling session' : 'View recent bookings'}
+                  {activeView === 'form'
+                    ? (editingBooking ? 'Edit counselling session' : 'Book your counselling session')
+                    : 'View recent bookings'}
                 </Typography>
               </Box>
               <Stack direction="row" spacing={1} sx={{ mb: 2, justifyContent: 'center', flexWrap: 'wrap' }}>
                 <Button
                   variant={activeView === 'form' ? 'contained' : 'outlined'}
-                  onClick={() => setActiveView('form')}
+                  onClick={() => {
+                    setActiveView('form');
+                    if (editingBooking) {
+                      setEditingBooking(null);
+                      setFormData({
+                        name: '',
+                        contact: '',
+                        address: '',
+                        date: '',
+                        time: '',
+                        type: '',
+                        processedBy: '',
+                      });
+                      setMessage('');
+                    }
+                  }}
+                  color={editingBooking ? 'error' : 'primary'}
                 >
-                  New Booking
+                  {editingBooking ? 'Cancel Edit' : 'New Booking'}
                 </Button>
                 <Button
                   variant={activeView === 'bookings' ? 'contained' : 'outlined'}
@@ -363,7 +507,7 @@ function App() {
                   <Grid size={{ xs: 12, sm: 6 }}>
                     <TimePicker
                       label="Time"
-                      value={formData.time ? dayjs(`2000-01-01T${formData.time}`) : null}
+                      value={getTimePickerValue(formData.time)}
                       onChange={handleTimeChange}
                       minutesStep={5}
                       slotProps={{
@@ -421,7 +565,7 @@ function App() {
                   <Button
                     type="submit"
                     variant="contained"
-                    color="primary"
+                    color={editingBooking ? 'secondary' : 'primary'}
                     size="medium"
                     startIcon={<Send />}
                     fullWidth
@@ -439,7 +583,7 @@ function App() {
                       },
                     }}
                   >
-                    Book Session
+                    {editingBooking ? 'Update Session' : 'Book Session'}
                   </Button>
                 </Box>
               </Box>
@@ -498,6 +642,17 @@ function App() {
                               </Typography>
                             )}
                           </Stack>
+                          <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 1.5 }}>
+                            <Button
+                              size="small"
+                              variant="outlined"
+                              startIcon={<Edit />}
+                              onClick={() => handleEditClick(booking)}
+                              sx={{ borderRadius: 1.5, textTransform: 'none' }}
+                            >
+                              Edit
+                            </Button>
+                          </Box>
                         </CardContent>
                       </Card>
                     ))}

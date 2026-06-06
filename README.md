@@ -14,12 +14,16 @@ A web application for booking counselling sessions with reminders via WhatsApp a
 1. Install dependencies
    - `npm install`
 
-2. Configure backend storage (choose one)
+2. Create backend environment file
+   - Copy `.env.example` to `.env`.
+   - Set `APPS_SCRIPT_URL` to your own deployed Apps Script Web App URL.
+
+3. Configure backend storage (choose one)
    - Google Sheets service account (recommended): set `SHEET_ID`, `CLIENT_EMAIL`, `PRIVATE_KEY`.
-   - Apps Script fallback: set `APPS_SCRIPT_URL` to your deployed Web App URL.
+   - Apps Script fallback: deploy `apps-script.js` as a Web App, then set `APPS_SCRIPT_URL` to that deployment URL.
      Your script deployment must allow public access, otherwise booking will fail with access denied.
 
-3. Configure WhatsApp sending with Green API
+4. Configure WhatsApp sending with Green API
    - Create an instance in Green API dashboard and scan QR with your WhatsApp number.
    - Set these backend environment variables:
      - `GREEN_API_ID_INSTANCE` (example: `1101xxxxxx`)
@@ -28,11 +32,11 @@ A web application for booking counselling sessions with reminders via WhatsApp a
      - `GREEN_API_BASE_URL` (default: `https://api.green-api.com`)
      - `COUNSELOR_CONTACT` (default: `8867030490`)
 
-4. Local development
+5. Local development
    - Run: `npm run dev`
    - This starts both backend (`:5001`) and frontend (Vite, usually `:5173` or next free port).
 
-5. Deployment
+6. Deployment
    - Deploy backend and frontend.
    - Set frontend env var `VITE_API_BASE_URL` to your backend base URL (for example, `https://api.example.com`).
    - Set backend env var `ALLOWED_ORIGINS` to your frontend origin(s), comma-separated (or `*` for open access).

@@ -11,6 +11,64 @@ function getSheet_() {
   return sheet;
 }
 
+function normalizeDateInput_(value) {
+  if (!value) {
+    return '';
+  }
+
+  const asString = String(value).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(asString)) {
+    return asString;
+  }
+
+  const parsed = new Date(asString);
+  if (!isNaN(parsed.getTime())) {
+    return Utilities.formatDate(parsed, 'Asia/Kolkata', 'yyyy-MM-dd');
+  }
+
+  return asString;
+}
+
+function normalizeTimeInput_(value) {
+  if (!value) {
+    return '';
+  }
+
+  const asString = String(value).trim();
+
+  const hhmm = asString.match(/^(\d{1,2}):(\d{2})$/);
+  if (hhmm) {
+    const hours = Number(hhmm[1]);
+    const minutes = Number(hhmm[2]);
+    if (hours >= 0 && hours < 24 && minutes >= 0 && minutes < 60) {
+      return ('0' + hours).slice(-2) + ':' + ('0' + minutes).slice(-2);
+    }
+  }
+
+  const ampm = asString.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  if (ampm) {
+    let hours = Number(ampm[1]);
+    const minutes = Number(ampm[2]);
+    const meridiem = ampm[3].toUpperCase();
+
+    if (meridiem === 'AM' && hours === 12) {
+      hours = 0;
+    }
+
+    if (meridiem === 'PM' && hours !== 12) {
+      hours += 12;
+    }
+
+    return ('0' + hours).slice(-2) + ':' + ('0' + minutes).slice(-2);
+  }
+
+  return asString;
+}
+
+function createBookingId_() {
+  return Utilities.getUuid();
+}
+
 function doGet(e) {
   try {
     const action = e && e.parameter ? e.parameter.action : '';
@@ -25,23 +83,35 @@ function doGet(e) {
     }
 
     const sheet = getSheet_();
+    const timezone = sheet.getParent().getSpreadsheetTimeZone();
     const values = sheet.getDataRange().getValues();
 
-    const header = ['Name', 'Contact', 'Address', 'Date', 'Time', 'Type', 'Processed By'];
-    const hasHeader = values.length > 0 && header.every((value, index) => String(values[0][index] || '').trim() === value);
-    const dataRows = hasHeader ? values.slice(1) : values;
+    const requiredHeader = ['Name', 'Contact', 'Address', 'Date', 'Time', 'Type', 'Processed By'];
+    const hasHeader = values.length > 0 && requiredHeader.every((value, index) => String(values[0][index] || '').trim() === value);
 
-    const bookings = dataRows
-      .filter((row) => row.some((cell) => String(cell || '').trim() !== ''))
-      .map((row) => ({
-        name: row[0] || '',
-        contact: row[1] || '',
-        address: row[2] || '',
-        date: row[3] || '',
-        time: row[4] || '',
-        type: row[5] || '',
-        processedBy: row[6] || '',
-      }))
+    const bookings = values
+      .map((row, index) => {
+        const dateVal = row[3] instanceof Date 
+          ? Utilities.formatDate(row[3], timezone, "yyyy-MM-dd") 
+          : String(row[3] || '');
+        const timeVal = row[4] instanceof Date 
+          ? Utilities.formatDate(row[4], timezone, "HH:mm") 
+          : String(row[4] || '');
+
+        return {
+          name: row[0] || '',
+          contact: row[1] || '',
+          address: row[2] || '',
+          date: dateVal,
+          time: timeVal,
+          type: row[5] || '',
+          processedBy: row[6] || '',
+          bookingId: row[7] || '',
+          rowIndex: index + 1,
+        };
+      })
+      .slice(hasHeader ? 1 : 0)
+      .filter((row) => row.name || row.contact)
       .reverse();
 
     return ContentService
@@ -64,31 +134,36 @@ function doPost(e) {
     }
 
     const data = JSON.parse(e.postData.contents);
-    const { name, contact, address, date, time, type, processedBy } = data;
+    const { action, rowIndex, bookingId, name, contact, address, date, time, type, processedBy } = data;
+    const normalizedDate = normalizeDateInput_(date);
+    const normalizedTime = normalizeTimeInput_(time);
+    const normalizedBookingId = bookingId || createBookingId_();
 
-    if (!name || !contact || !address || !date || !time || !type || !processedBy) {
+    if (!name || !contact || !address || !normalizedDate || !normalizedTime || !type || !processedBy) {
       throw new Error('All fields are required.');
     }
 
     // Open the Google Sheet
     const sheet = getSheet_();
 
-    // Append data
-    sheet.appendRow([name, contact, address, date, time, type, processedBy]);
+    if (action === 'update') {
+      if (!rowIndex) {
+        throw new Error('Row index is required for update.');
+      }
+      // Update row (rowIndex in Google Sheet is 1-indexed, columns A to H are 1 to 8)
+      sheet.getRange(Number(rowIndex), 1, 1, 8).setValues([[name, contact, address, normalizedDate, normalizedTime, type, processedBy, normalizedBookingId]]);
 
-    // Schedule reminder (using time-based trigger)
-    const reminderTime = new Date(`${date}T${time}`);
-    ScriptApp.newTrigger('sendReminder')
-      .timeBased()
-      .at(reminderTime)
-      .create();
+      return ContentService
+        .createTextOutput(JSON.stringify({ success: true, message: 'Update successful!' }))
+        .setMimeType(ContentService.MimeType.JSON);
+    } else {
+      // Append data (normal booking)
+      sheet.appendRow([name, contact, address, normalizedDate, normalizedTime, type, processedBy, normalizedBookingId]);
 
-    // Store data for reminder
-    PropertiesService.getScriptProperties().setProperty('reminder_' + Date.now(), JSON.stringify({ name, time }));
-
-    return ContentService
-      .createTextOutput(JSON.stringify({ success: true, message: 'Booking successful!' }))
-      .setMimeType(ContentService.MimeType.JSON);
+      return ContentService
+        .createTextOutput(JSON.stringify({ success: true, message: 'Booking successful!' }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
   } catch (error) {
     return ContentService
       .createTextOutput(JSON.stringify({
