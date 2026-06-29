@@ -23,7 +23,7 @@ const PORT = process.env.NODE_ENV === 'production'
   : 5001;
 
 // Local/default configuration. For production, you can still override any value using process.env.
-const APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || 'https://script.google.com/macros/s/AKfycbwE4bHI6mPtz5klFZUZ7DrX1SpoMh068jXn10sITYSp8Jef1Xkba4vwVFH2uQxD2qxT/exec';
+const APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || 'https://script.google.com/macros/s/AKfycbwRyNpmBncKo1NJIBQQmiUJvehVNF60kpTpKcytNVjKLq5wzu2c-Fw5vek_xPgxbeWC/exec';
 const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS || 'http://localhost:5173';
 const GREEN_API_ID_INSTANCE = process.env.GREEN_API_ID_INSTANCE || '7107629494';
 const GREEN_API_TOKEN_INSTANCE = process.env.GREEN_API_TOKEN_INSTANCE || 'c92fd11ef0c2406f9d9d210a115bafdd75eaf2eb47fb40928f';
@@ -651,24 +651,26 @@ const handleBooking = async (req, res) => {
     // sendWhatsApp(`91${contact}`, `Hi ${name}, your counselling session is booked for ${date} at ${time}.`)
     //   .catch((err) => console.error('WhatsApp confirmation error:', err.message));
 
-    // Schedule WhatsApp reminder 30 mins before appointment
-    // Force Indian Standard Time (UTC+05:30) timezone parsing since cloud servers run in UTC.
-    const sessionDate = new Date(`${date}T${time}:00+05:30`);
-    const reminderDate = new Date(sessionDate.getTime() - 30 * 60 * 1000); // 30 mins before
-    
-    // Create a unique ID for this reminder
-    const appointmentId = createReminderId(name, reminderDate, time, type, COUNSELOR_CONTACT);
-    
-    scheduleReminder(
-      appointmentId,
-      reminderDate,
-      name,
-      contact,
-      COUNSELOR_CONTACT,
-      time,
-      type,
-      booking.bookingId
-    );
+    if (storageBackend !== 'google-apps-script') {
+      // Schedule WhatsApp reminder 30 mins before appointment (for direct sheets API only)
+      // Force Indian Standard Time (UTC+05:30) timezone parsing since cloud servers run in UTC.
+      const sessionDate = new Date(`${date}T${time}:00+05:30`);
+      const reminderDate = new Date(sessionDate.getTime() - 30 * 60 * 1000); // 30 mins before
+      
+      // Create a unique ID for this reminder
+      const appointmentId = createReminderId(name, reminderDate, time, type, COUNSELOR_CONTACT);
+      
+      scheduleReminder(
+        appointmentId,
+        reminderDate,
+        name,
+        contact,
+        COUNSELOR_CONTACT,
+        time,
+        type,
+        booking.bookingId
+      );
+    }
 
     res.status(200).json({
       success: true,
@@ -767,36 +769,38 @@ const handleEdit = async (req, res) => {
       throw new Error('Not able to access Google Sheet.');
     }
 
-    // 3. Reschedule WhatsApp reminder
-    try {
-      const reminders = loadReminders();
-      const previousReminderId = originalBooking
-        ? createReminderId(originalBooking.name, new Date(`${originalBooking.date}T${normalizeTimeValue(originalBooking.time)}:00+05:30`), normalizeTimeValue(originalBooking.time), originalBooking.type, COUNSELOR_CONTACT)
-        : '';
-      const updatedReminders = reminders.filter(r => {
-        if (r.id === previousReminderId || r.bookingId === resolvedBookingId || (r.clientName === name && r.status === 'pending')) {
-          return false;
-        }
-        return true;
-      });
-      saveReminders(updatedReminders);
+    if (storageBackend !== 'google-apps-script') {
+      // 3. Reschedule WhatsApp reminder (for direct sheets API only)
+      try {
+        const reminders = loadReminders();
+        const previousReminderId = originalBooking
+          ? createReminderId(originalBooking.name, new Date(`${originalBooking.date}T${normalizeTimeValue(originalBooking.time)}:00+05:30`), normalizeTimeValue(originalBooking.time), originalBooking.type, COUNSELOR_CONTACT)
+          : '';
+        const updatedReminders = reminders.filter(r => {
+          if (r.id === previousReminderId || r.bookingId === resolvedBookingId || (r.clientName === name && r.status === 'pending')) {
+            return false;
+          }
+          return true;
+        });
+        saveReminders(updatedReminders);
 
-      const sessionDate = new Date(`${date}T${time}:00+05:30`);
-      const reminderDate = new Date(sessionDate.getTime() - 30 * 60 * 1000); // 30 mins before
-      
-      const appointmentId = createReminderId(name, reminderDate, time, type, COUNSELOR_CONTACT);
-      scheduleReminder(
-        appointmentId,
-        reminderDate,
-        name,
-        contact,
-        COUNSELOR_CONTACT,
-        time,
-        type,
-        resolvedBookingId
-      );
-    } catch (reminderErr) {
-      console.error('Failed to reschedule reminder on edit:', reminderErr.message);
+        const sessionDate = new Date(`${date}T${time}:00+05:30`);
+        const reminderDate = new Date(sessionDate.getTime() - 30 * 60 * 1000); // 30 mins before
+        
+        const appointmentId = createReminderId(name, reminderDate, time, type, COUNSELOR_CONTACT);
+        scheduleReminder(
+          appointmentId,
+          reminderDate,
+          name,
+          contact,
+          COUNSELOR_CONTACT,
+          time,
+          type,
+          resolvedBookingId
+        );
+      } catch (reminderErr) {
+        console.error('Failed to reschedule reminder on edit:', reminderErr.message);
+      }
     }
 
     res.status(200).json({

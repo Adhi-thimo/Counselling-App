@@ -3,76 +3,20 @@
 function getSheet_() {
   const sheetId = '10debAspmaD3ZfKAxeWpgbMC1nNfVhwC-mywsTuCOyOg';
   const sheet = SpreadsheetApp.openById(sheetId).getSheetByName('Sheet1');
-
   if (!sheet) {
     throw new Error('Sheet "Sheet1" was not found.');
   }
-
   return sheet;
 }
 
-function normalizeDateInput_(value) {
-  if (!value) {
-    return '';
-  }
-
-  const asString = String(value).trim();
-  if (/^\d{4}-\d{2}-\d{2}$/.test(asString)) {
-    return asString;
-  }
-
-  const parsed = new Date(asString);
-  if (!isNaN(parsed.getTime())) {
-    return Utilities.formatDate(parsed, 'Asia/Kolkata', 'yyyy-MM-dd');
-  }
-
-  return asString;
-}
-
-function normalizeTimeInput_(value) {
-  if (!value) {
-    return '';
-  }
-
-  const asString = String(value).trim();
-
-  const hhmm = asString.match(/^(\d{1,2}):(\d{2})$/);
-  if (hhmm) {
-    const hours = Number(hhmm[1]);
-    const minutes = Number(hhmm[2]);
-    if (hours >= 0 && hours < 24 && minutes >= 0 && minutes < 60) {
-      return ('0' + hours).slice(-2) + ':' + ('0' + minutes).slice(-2);
-    }
-  }
-
-  const ampm = asString.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
-  if (ampm) {
-    let hours = Number(ampm[1]);
-    const minutes = Number(ampm[2]);
-    const meridiem = ampm[3].toUpperCase();
-
-    if (meridiem === 'AM' && hours === 12) {
-      hours = 0;
-    }
-
-    if (meridiem === 'PM' && hours !== 12) {
-      hours += 12;
-    }
-
-    return ('0' + hours).slice(-2) + ':' + ('0' + minutes).slice(-2);
-  }
-
-  return asString;
-}
-
-function createBookingId_() {
-  return Utilities.getUuid();
+function cleanPhone_(phone) {
+  const digits = String(phone).replace(/[^0-9]/g, '');
+  return '91' + digits.slice(-10);
 }
 
 function doGet(e) {
   try {
     const action = e && e.parameter ? e.parameter.action : '';
-
     if (action !== 'list') {
       return ContentService
         .createTextOutput(JSON.stringify({
@@ -83,33 +27,21 @@ function doGet(e) {
     }
 
     const sheet = getSheet_();
-    const timezone = sheet.getParent().getSpreadsheetTimeZone();
     const values = sheet.getDataRange().getValues();
-
-    const requiredHeader = ['Name', 'Contact', 'Address', 'Date', 'Time', 'Type', 'Processed By'];
-    const hasHeader = values.length > 0 && requiredHeader.every((value, index) => String(values[0][index] || '').trim() === value);
+    const header = ['Name', 'Contact', 'Address', 'Date', 'Time', 'Type', 'Processed By'];
+    const hasHeader = values.length > 0 && header.every((value, index) => String(values[0][index] || '').trim() === value);
 
     const bookings = values
-      .map((row, index) => {
-        const dateVal = row[3] instanceof Date 
-          ? Utilities.formatDate(row[3], timezone, "yyyy-MM-dd") 
-          : String(row[3] || '');
-        const timeVal = row[4] instanceof Date 
-          ? Utilities.formatDate(row[4], timezone, "HH:mm") 
-          : String(row[4] || '');
-
-        return {
-          name: row[0] || '',
-          contact: row[1] || '',
-          address: row[2] || '',
-          date: dateVal,
-          time: timeVal,
-          type: row[5] || '',
-          processedBy: row[6] || '',
-          bookingId: row[7] || '',
-          rowIndex: index + 1,
-        };
-      })
+      .map((row, index) => ({
+        name: row[0] || '',
+        contact: row[1] || '',
+        address: row[2] || '',
+        date: row[3] || '',
+        time: row[4] || '',
+        type: row[5] || '',
+        processedBy: row[6] || '',
+        rowIndex: index + 1,
+      }))
       .slice(hasHeader ? 1 : 0)
       .filter((row) => row.name || row.contact)
       .reverse();
@@ -134,31 +66,30 @@ function doPost(e) {
     }
 
     const data = JSON.parse(e.postData.contents);
-    const { action, rowIndex, bookingId, name, contact, address, date, time, type, processedBy } = data;
-    const normalizedDate = normalizeDateInput_(date);
-    const normalizedTime = normalizeTimeInput_(time);
-    const normalizedBookingId = bookingId || createBookingId_();
+    const { action, rowIndex, name, contact, address, date, time, type, processedBy } = data;
 
-    if (!name || !contact || !address || !normalizedDate || !normalizedTime || !type || !processedBy) {
+    if (!name || !contact || !address || !date || !time || !type || !processedBy) {
       throw new Error('All fields are required.');
     }
 
-    // Open the Google Sheet
     const sheet = getSheet_();
 
     if (action === 'update') {
       if (!rowIndex) {
         throw new Error('Row index is required for update.');
       }
-      // Update row (rowIndex in Google Sheet is 1-indexed, columns A to H are 1 to 8)
-      sheet.getRange(Number(rowIndex), 1, 1, 8).setValues([[name, contact, address, normalizedDate, normalizedTime, type, processedBy, normalizedBookingId]]);
+      sheet.getRange(Number(rowIndex), 1, 1, 7).setValues([[name, contact, address, date, time, type, processedBy]]);
+      
+      // Update persistent trigger (remove old properties & recreate trigger)
+      cleanOldTriggersByName_(name);
+      scheduleReminderTrigger_(name, contact, date, time);
 
       return ContentService
         .createTextOutput(JSON.stringify({ success: true, message: 'Update successful!' }))
         .setMimeType(ContentService.MimeType.JSON);
     } else {
-      // Append data (normal booking)
-      sheet.appendRow([name, contact, address, normalizedDate, normalizedTime, type, processedBy, normalizedBookingId]);
+      sheet.appendRow([name, contact, address, date, time, type, processedBy]);
+      scheduleReminderTrigger_(name, contact, date, time);
 
       return ContentService
         .createTextOutput(JSON.stringify({ success: true, message: 'Booking successful!' }))
@@ -174,60 +105,93 @@ function doPost(e) {
   }
 }
 
-function sendReminder() {
-  // This function will be called at the reminder time
+function scheduleReminderTrigger_(name, contact, date, time) {
+  const sessionDate = new Date(date + 'T' + time + ':00+05:30');
+  const reminderTime = new Date(sessionDate.getTime() - 30 * 60 * 1000); // 30 mins before
+  
+  if (reminderTime > new Date()) {
+    const triggerId = ScriptApp.newTrigger('sendReminder')
+      .timeBased()
+      .at(reminderTime)
+      .create()
+      .getUniqueId();
+
+    PropertiesService.getScriptProperties().setProperty('trigger_' + triggerId, JSON.stringify({
+      name: name,
+      contact: contact,
+      time: time
+    }));
+  }
+}
+
+function cleanOldTriggersByName_(name) {
   const properties = PropertiesService.getScriptProperties();
   const keys = properties.getKeys();
+  const triggers = ScriptApp.getProjectTriggers();
 
   keys.forEach(key => {
-    if (key.startsWith('reminder_')) {
+    if (key.startsWith('trigger_')) {
       const data = JSON.parse(properties.getProperty(key));
-      // Send WhatsApp reminder using Twilio
-      const twilioSid = 'your_account_sid'; // Replace with your Twilio SID
-      const twilioToken = 'your_auth_token'; // Replace with your Twilio token
-      const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${twilioSid}/Messages.json`;
-
-      const payload = {
-        From: 'whatsapp:+14155238886', // Twilio WhatsApp number
-        To: 'whatsapp:+918867030490', // Destination number
-        Body: `Reminder: Counselling session for ${data.name} at ${data.time}.`
-      };
-
-      const options = {
-        method: 'post',
-        headers: {
-          'Authorization': 'Basic ' + Utilities.base64Encode(twilioSid + ':' + twilioToken),
-          'Content-Type': 'application/x-www-form-urlencoded'
-        },
-        payload: payload
-      };
-
-      try {
-        UrlFetchApp.fetch(twilioUrl, options);
-        Logger.log('Reminder sent via WhatsApp');
-      } catch (error) {
-        Logger.log('Error sending reminder: ' + error);
+      if (data.name === name) {
+        const triggerId = key.replace('trigger_', '');
+        // Delete trigger
+        for (let i = 0; i < triggers.length; i++) {
+          if (triggers[i].getUniqueId() === triggerId) {
+            ScriptApp.deleteTrigger(triggers[i]);
+          }
+        }
+        properties.deleteProperty(key);
       }
-
-      // Remove the property
-      properties.deleteProperty(key);
     }
   });
 }
 
-// For testing, you can call this function
-function testBooking() {
-  const testData = {
-    name: 'John Doe',
-    contact: '1234567890',
-    address: '123 Main St',
-    date: '2023-10-01',
-    time: '10:00',
-    type: 'mental-health',
-    processedBy: 'Officer A'
-  };
+function sendReminder(e) {
+  if (!e) return;
+  const triggerId = e.triggerUid;
+  const properties = PropertiesService.getScriptProperties();
+  const propValue = properties.getProperty('trigger_' + triggerId);
+  
+  if (!propValue) return;
+  const data = JSON.parse(propValue);
 
-  const e = { postData: { contents: JSON.stringify(testData) } };
-  const result = doPost(e);
-  Logger.log(result.getContent());
+  // --- Green API Settings ---
+  const greenApiId = '7107629494';
+  const greenApiToken = 'c92fd11ef0c2406f9d9d210a115bafdd75eaf2eb47fb40928f';
+  const counselorContact = '8050045500';
+  
+  const clientChatId = cleanPhone_(data.contact) + '@c.us';
+  const counselorChatId = cleanPhone_(counselorContact) + '@c.us';
+  const endpoint = 'https://api.green-api.com/waInstance' + greenApiId + '/sendMessage/' + greenApiToken;
+
+  // Send to counselor
+  try {
+    UrlFetchApp.fetch(endpoint, {
+      method: 'post',
+      contentType: 'application/json',
+      payload: JSON.stringify({
+        chatId: counselorChatId,
+        message: 'Reminder: Counselling session with ' + data.name + ' is in 30 minutes (at ' + data.time + ').'
+      })
+    });
+  } catch (err) {
+    Logger.log('Failed to send WhatsApp to counselor: ' + err);
+  }
+
+  // Send to client
+  try {
+    UrlFetchApp.fetch(endpoint, {
+      method: 'post',
+      contentType: 'application/json',
+      payload: JSON.stringify({
+        chatId: clientChatId,
+        message: 'Hi ' + data.name + ', your counselling session is in 30 minutes (at ' + data.time + ').'
+      })
+    });
+  } catch (err) {
+    Logger.log('Failed to send WhatsApp to client: ' + err);
+  }
+
+  // Clean property after trigger executes
+  properties.deleteProperty('trigger_' + triggerId);
 }
