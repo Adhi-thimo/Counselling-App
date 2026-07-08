@@ -14,6 +14,12 @@ function cleanPhone_(phone) {
   return '91' + digits.slice(-10);
 }
 
+function getCounselorContact_() {
+  const properties = PropertiesService.getScriptProperties();
+  const configuredContact = properties.getProperty('counselorContact');
+  return configuredContact || '8904469596';
+}
+
 function doGet(e) {
   try {
     const action = e && e.parameter ? e.parameter.action : '';
@@ -40,6 +46,7 @@ function doGet(e) {
         time: row[4] || '',
         type: row[5] || '',
         processedBy: row[6] || '',
+        bookingId: row[7] || '',
         rowIndex: index + 1,
       }))
       .slice(hasHeader ? 1 : 0)
@@ -66,7 +73,7 @@ function doPost(e) {
     }
 
     const data = JSON.parse(e.postData.contents);
-    const { action, rowIndex, name, contact, address, date, time, type, processedBy } = data;
+    const { action, rowIndex, name, contact, address, date, time, type, processedBy, bookingId } = data;
 
     if (!name || !contact || !address || !date || !time || !type || !processedBy) {
       throw new Error('All fields are required.');
@@ -78,18 +85,28 @@ function doPost(e) {
       if (!rowIndex) {
         throw new Error('Row index is required for update.');
       }
-      sheet.getRange(Number(rowIndex), 1, 1, 7).setValues([[name, contact, address, date, time, type, processedBy]]);
+      sheet.getRange(Number(rowIndex), 1, 1, 8).setValues([[name, contact, address, date, time, type, processedBy, bookingId || '']]);
       
-      // Update persistent trigger (remove old properties & recreate trigger)
-      cleanOldTriggersByName_(name);
-      scheduleReminderTrigger_(name, contact, date, time);
+      // Update persistent trigger (wrap in try/catch so it doesn't fail the booking if triggers fail)
+      try {
+        cleanOldTriggersByName_(name);
+        scheduleReminderTrigger_(name, contact, date, time);
+      } catch (triggerError) {
+        Logger.log('Trigger update failed: ' + triggerError.message);
+      }
 
       return ContentService
         .createTextOutput(JSON.stringify({ success: true, message: 'Update successful!' }))
         .setMimeType(ContentService.MimeType.JSON);
     } else {
-      sheet.appendRow([name, contact, address, date, time, type, processedBy]);
-      scheduleReminderTrigger_(name, contact, date, time);
+      sheet.appendRow([name, contact, address, date, time, type, processedBy, bookingId || '']);
+      
+      // Schedule reminder (wrap in try/catch so it doesn't fail the booking if triggers fail)
+      try {
+        scheduleReminderTrigger_(name, contact, date, time);
+      } catch (triggerError) {
+        Logger.log('Trigger scheduling failed: ' + triggerError.message);
+      }
 
       return ContentService
         .createTextOutput(JSON.stringify({ success: true, message: 'Booking successful!' }))
@@ -158,7 +175,7 @@ function sendReminder(e) {
   // --- Green API Settings ---
   const greenApiId = '7107629494';
   const greenApiToken = 'c92fd11ef0c2406f9d9d210a115bafdd75eaf2eb47fb40928f';
-  const counselorContact = '8050045500';
+  const counselorContact = getCounselorContact_();
   
   const clientChatId = cleanPhone_(data.contact) + '@c.us';
   const counselorChatId = cleanPhone_(counselorContact) + '@c.us';

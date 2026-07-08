@@ -17,18 +17,19 @@ process.on('uncaughtException', (error) => {
 
 const app = express();
 const REMINDERS_FILE = path.join(__dirname, '.reminders.json');
+const BOOKING_COUNTER_FILE = path.join(__dirname, '.booking-counter.json');
 const scheduledReminderIds = new Set();
 const PORT = process.env.NODE_ENV === 'production'
   ? (process.env.PORT || 5001)
   : 5001;
 
 // Local/default configuration. For production, you can still override any value using process.env.
-const APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || 'https://script.google.com/macros/s/AKfycbwRyNpmBncKo1NJIBQQmiUJvehVNF60kpTpKcytNVjKLq5wzu2c-Fw5vek_xPgxbeWC/exec';
+const APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || 'https://script.google.com/macros/s/AKfycbzFlW7yNw1C6bQnSbOs07kXIQPdiMw1jn_t02dgx1-W99ZfnRKtL7w9YwxP82g-LHWf/exec';
 const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS || 'http://localhost:5173';
 const GREEN_API_ID_INSTANCE = process.env.GREEN_API_ID_INSTANCE || '7107629494';
 const GREEN_API_TOKEN_INSTANCE = process.env.GREEN_API_TOKEN_INSTANCE || 'c92fd11ef0c2406f9d9d210a115bafdd75eaf2eb47fb40928f';
 const GREEN_API_BASE_URL = (process.env.GREEN_API_BASE_URL || 'https://api.green-api.com').replace(/\/$/, '');
-const COUNSELOR_CONTACT = process.env.COUNSELOR_CONTACT || '8050045500';
+const COUNSELOR_CONTACT = process.env.COUNSELOR_CONTACT || '8904469596';
 const COUNSELOR_NAME = process.env.COUNSELOR_NAME || 'Benson K Sunny';
 
 // Middleware
@@ -82,12 +83,38 @@ const cleanPhoneNumber = (phone) => {
   return '91' + last10;
 };
 
-const createBookingId = () => {
-  if (typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID();
+const readBookingCounter = () => {
+  try {
+    if (fs.existsSync(BOOKING_COUNTER_FILE)) {
+      const data = fs.readFileSync(BOOKING_COUNTER_FILE, 'utf-8');
+      return JSON.parse(data);
+    }
+  } catch (error) {
+    console.warn('Failed to read booking counter:', error.message);
   }
+  return { date: '', counter: 0 };
+};
 
-  return `booking_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+const writeBookingCounter = (counter) => {
+  try {
+    fs.writeFileSync(BOOKING_COUNTER_FILE, JSON.stringify(counter, null, 2));
+  } catch (error) {
+    console.error('Failed to save booking counter:', error.message);
+  }
+};
+
+const createBookingId = () => {
+  const now = new Date();
+  const yy = String(now.getFullYear()).slice(-2);
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const dd = String(now.getDate()).padStart(2, '0');
+  const dateStr = `${yy}${mm}${dd}`;
+
+  const counter = readBookingCounter();
+  const seq = counter.date === dateStr ? counter.counter + 1 : 1;
+  writeBookingCounter({ date: dateStr, counter: seq });
+
+  return `${dateStr}${String(seq).padStart(3, '0')}`;
 };
 
 const createReminderId = (clientName, reminderDate, appointmentTime, counsellingType, counselorContact) => {
@@ -253,6 +280,13 @@ const resolveMissingRowIndex = async (originalBooking) => {
 };
 
 // Schedule a reminder with persistence
+const REMINDER_LOG = path.join(__dirname, 'reminder.log');
+const logReminder = (msg) => {
+  const line = `[${new Date().toISOString()}] REMINDER: ${msg}`;
+  console.log(line);
+  try { fs.appendFileSync(REMINDER_LOG, line + '\n'); } catch (e) { console.error('Log write failed:', e.message); }
+};
+
 const scheduleReminder = (
   appointmentId,
   reminderDate,
@@ -266,40 +300,43 @@ const scheduleReminder = (
 ) => {
   const { persist = true } = options;
 
+  logReminder(`scheduleReminder called for ${clientName} at ${appointmentTime}, reminderDate=${reminderDate.toISOString()}`);
+
   if (reminderDate <= new Date()) {
-    console.warn(`Reminder time ${reminderDate} is in the past. Skipping.`);
+    logReminder(`Reminder time ${reminderDate} is in the past. Skipping.`);
     return;
   }
 
   if (scheduledReminderIds.has(appointmentId)) {
-    console.log(`Skipping duplicate in-memory schedule for reminder ${appointmentId}`);
+    logReminder(`Skipping duplicate in-memory schedule for reminder ${appointmentId}`);
     return;
   }
 
   if (persist) {
     const reminders = loadReminders();
     if (reminders.some((reminder) => reminder.id === appointmentId)) {
-      console.log(`Reminder ${appointmentId} already exists on disk. Skipping duplicate schedule.`);
+      logReminder(`Reminder ${appointmentId} already exists on disk. Skipping duplicate schedule.`);
       return;
     }
   }
 
   scheduledReminderIds.add(appointmentId);
 
+  logReminder(`Creating scheduleJob for ${clientName} at ${reminderDate.toISOString()}`);
+
   schedule.scheduleJob(reminderDate, async () => {
-    console.log(`\n⏰ REMINDER TRIGGERED for ${clientName} at ${appointmentTime}`);
+    logReminder(`JOB FIRED for ${clientName} at ${appointmentTime}`);
     
     try {
-      // Send to counselor
-      console.log(`Sending reminder to counselor (${counselorContact})...`);
+      logReminder(`About to call sendWhatsApp to counselor (${counselorContact})...`);
       const safeType = String(counsellingType || 'General').trim();
       await sendWhatsApp(
         counselorContact,
         `Hi ${COUNSELOR_NAME} Your councelling with ${clientName} regarding ${safeType} councelling is schedule by ${appointmentTime}`
       );
-      console.log('✓ Counselor reminder sent');
+      logReminder(`sendWhatsApp completed successfully`);
     } catch (err) {
-      console.error('✗ Counselor reminder failed:', err.message);
+      logReminder(`sendWhatsApp FAILED: ${err.message}`);
     }
 
     // Mark reminder as sent
@@ -307,7 +344,7 @@ const scheduleReminder = (
     const updatedReminders = reminders.filter(r => r.id !== appointmentId);
     saveReminders(updatedReminders);
     scheduledReminderIds.delete(appointmentId);
-    console.log(`Reminder ${appointmentId} marked as sent and removed from queue.`);
+    logReminder(`Reminder ${appointmentId} cleaned up.`);
   });
 
   if (persist) {
@@ -367,9 +404,16 @@ const rescheduleAllReminders = async () => {
   }
 };
 
+const GREEN_API_LOG = path.join(__dirname, 'green-api.log');
+const logGreenApi = (msg) => {
+  const line = `[${new Date().toISOString()}] ${msg}`;
+  console.log(line);
+  try { fs.appendFileSync(GREEN_API_LOG, line + '\n'); } catch {}
+};
+
 const sendWhatsApp = async (to, body) => {
   if (!GREEN_API_ID_INSTANCE || !GREEN_API_TOKEN_INSTANCE) {
-    console.warn('Green API is not configured. Skipping message to', to);
+    logGreenApi(`WARN: Green API not configured. Skipping message to ${to}`);
     return;
   }
 
@@ -377,40 +421,35 @@ const sendWhatsApp = async (to, body) => {
   const chatId = `${cleaned}@c.us`;
   const endpoint = `${GREEN_API_BASE_URL}/waInstance${GREEN_API_ID_INSTANCE}/sendMessage/${GREEN_API_TOKEN_INSTANCE}`;
 
-  console.log(`[Green API] Sending to chatId: ${chatId}`);
-  console.log(`[Green API] Endpoint: ${endpoint}`);
-
-  const greenApiResponse = await fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      chatId,
-      message: body,
-    }),
-  });
-
-  const responseText = await greenApiResponse.text();
-  console.log(`[Green API] HTTP ${greenApiResponse.status} — Response: ${responseText.slice(0, 300)}`);
-
-  let parsedResponse = null;
+  logGreenApi(`Sending to chatId: ${chatId}`);
+  logGreenApi(`Endpoint: ${endpoint}`);
 
   try {
-    parsedResponse = responseText ? JSON.parse(responseText) : null;
-  } catch {
-    parsedResponse = null;
-  }
+    const greenApiResponse = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chatId, message: body }),
+    });
 
-  if (!greenApiResponse.ok) {
-    throw new Error(`Green API send failed (${greenApiResponse.status}): ${responseText.slice(0, 200)}`);
-  }
+    const responseText = await greenApiResponse.text();
+    logGreenApi(`HTTP ${greenApiResponse.status} — Response: ${responseText.slice(0, 500)}`);
 
-  if (parsedResponse?.error) {
-    throw new Error(`Green API error: ${parsedResponse.error}`);
-  }
+    let parsedResponse = null;
+    try { parsedResponse = responseText ? JSON.parse(responseText) : null; } catch { parsedResponse = null; }
 
-  console.log(`[Green API] Message sent successfully. idMessage: ${parsedResponse?.idMessage || 'N/A'}`);
+    if (!greenApiResponse.ok) {
+      throw new Error(`Green API send failed (${greenApiResponse.status}): ${responseText.slice(0, 200)}`);
+    }
+
+    if (parsedResponse?.error) {
+      throw new Error(`Green API error: ${parsedResponse.error}`);
+    }
+
+    logGreenApi(`Message sent successfully. idMessage: ${parsedResponse?.idMessage || 'N/A'}`);
+  } catch (err) {
+    logGreenApi(`ERROR: ${err.message}`);
+    throw err;
+  }
 };
 
 // Firebase Admin Initialization
@@ -651,26 +690,24 @@ const handleBooking = async (req, res) => {
     // sendWhatsApp(`91${contact}`, `Hi ${name}, your counselling session is booked for ${date} at ${time}.`)
     //   .catch((err) => console.error('WhatsApp confirmation error:', err.message));
 
-    if (storageBackend !== 'google-apps-script') {
-      // Schedule WhatsApp reminder 30 mins before appointment (for direct sheets API only)
-      // Force Indian Standard Time (UTC+05:30) timezone parsing since cloud servers run in UTC.
-      const sessionDate = new Date(`${date}T${time}:00+05:30`);
-      const reminderDate = new Date(sessionDate.getTime() - 30 * 60 * 1000); // 30 mins before
-      
-      // Create a unique ID for this reminder
-      const appointmentId = createReminderId(name, reminderDate, time, type, COUNSELOR_CONTACT);
-      
-      scheduleReminder(
-        appointmentId,
-        reminderDate,
-        name,
-        contact,
-        COUNSELOR_CONTACT,
-        time,
-        type,
-        booking.bookingId
-      );
-    }
+    // Schedule WhatsApp reminder 30 mins before appointment
+    // Force Indian Standard Time (UTC+05:30) timezone parsing since cloud servers run in UTC.
+    const sessionDate = new Date(`${date}T${time}:00+05:30`);
+    const reminderDate = new Date(sessionDate.getTime() - 30 * 60 * 1000); // 30 mins before
+    
+    // Create a unique ID for this reminder
+    const appointmentId = createReminderId(name, reminderDate, time, type, COUNSELOR_CONTACT);
+    
+    scheduleReminder(
+      appointmentId,
+      reminderDate,
+      name,
+      contact,
+      COUNSELOR_CONTACT,
+      time,
+      type,
+      booking.bookingId
+    );
 
     res.status(200).json({
       success: true,
@@ -769,38 +806,36 @@ const handleEdit = async (req, res) => {
       throw new Error('Not able to access Google Sheet.');
     }
 
-    if (storageBackend !== 'google-apps-script') {
-      // 3. Reschedule WhatsApp reminder (for direct sheets API only)
-      try {
-        const reminders = loadReminders();
-        const previousReminderId = originalBooking
-          ? createReminderId(originalBooking.name, new Date(`${originalBooking.date}T${normalizeTimeValue(originalBooking.time)}:00+05:30`), normalizeTimeValue(originalBooking.time), originalBooking.type, COUNSELOR_CONTACT)
-          : '';
-        const updatedReminders = reminders.filter(r => {
-          if (r.id === previousReminderId || r.bookingId === resolvedBookingId || (r.clientName === name && r.status === 'pending')) {
-            return false;
-          }
-          return true;
-        });
-        saveReminders(updatedReminders);
+    // Reschedule WhatsApp reminder
+    try {
+      const reminders = loadReminders();
+      const previousReminderId = originalBooking
+        ? createReminderId(originalBooking.name, new Date(`${originalBooking.date}T${normalizeTimeValue(originalBooking.time)}:00+05:30`), normalizeTimeValue(originalBooking.time), originalBooking.type, COUNSELOR_CONTACT)
+        : '';
+      const updatedReminders = reminders.filter(r => {
+        if (r.id === previousReminderId || r.bookingId === resolvedBookingId || (r.clientName === name && r.status === 'pending')) {
+          return false;
+        }
+        return true;
+      });
+      saveReminders(updatedReminders);
 
-        const sessionDate = new Date(`${date}T${time}:00+05:30`);
-        const reminderDate = new Date(sessionDate.getTime() - 30 * 60 * 1000); // 30 mins before
-        
-        const appointmentId = createReminderId(name, reminderDate, time, type, COUNSELOR_CONTACT);
-        scheduleReminder(
-          appointmentId,
-          reminderDate,
-          name,
-          contact,
-          COUNSELOR_CONTACT,
-          time,
-          type,
-          resolvedBookingId
-        );
-      } catch (reminderErr) {
-        console.error('Failed to reschedule reminder on edit:', reminderErr.message);
-      }
+      const sessionDate = new Date(`${date}T${time}:00+05:30`);
+      const reminderDate = new Date(sessionDate.getTime() - 30 * 60 * 1000); // 30 mins before
+      
+      const appointmentId = createReminderId(name, reminderDate, time, type, COUNSELOR_CONTACT);
+      scheduleReminder(
+        appointmentId,
+        reminderDate,
+        name,
+        contact,
+        COUNSELOR_CONTACT,
+        time,
+        type,
+        resolvedBookingId
+      );
+    } catch (reminderErr) {
+      console.error('Failed to reschedule reminder on edit:', reminderErr.message);
     }
 
     res.status(200).json({
@@ -887,6 +922,40 @@ app.get('/api/bookings', async (req, res) => {
     res.status(500).json({
       error: 'Not able to access Google Sheet.',
     });
+  }
+});
+
+// Test endpoint to directly send WhatsApp
+app.post('/api/test-whatsapp', async (req, res) => {
+  try {
+    const { to, message } = req.body;
+    await sendWhatsApp(to || COUNSELOR_CONTACT, message || 'Test message from server');
+    res.status(200).json({ success: true, message: 'WhatsApp sent' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/test-reminder', async (req, res) => {
+  try {
+    const { name = 'Test User', contact = '9876543210', date = '2026-07-01', time = '23:59', type = 'Test' } = req.body || {};
+    const reminderDate = new Date();
+    reminderDate.setMinutes(reminderDate.getMinutes() + 1);
+
+    scheduleReminder(
+      `test-reminder-${Date.now()}`,
+      reminderDate,
+      name,
+      contact,
+      COUNSELOR_CONTACT,
+      time,
+      type,
+      `test-${Date.now()}`
+    );
+
+    res.status(200).json({ success: true, message: 'Reminder scheduled for 1 minute from now.' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
