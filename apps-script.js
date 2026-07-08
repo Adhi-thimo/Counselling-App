@@ -17,7 +17,7 @@ function cleanPhone_(phone) {
 function getCounselorContact_() {
   const properties = PropertiesService.getScriptProperties();
   const configuredContact = properties.getProperty('counselorContact');
-  return configuredContact || '8904469596';
+  return configuredContact || '8050045500';
 }
 
 function doGet(e) {

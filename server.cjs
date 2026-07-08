@@ -24,12 +24,12 @@ const PORT = process.env.NODE_ENV === 'production'
   : 5001;
 
 // Local/default configuration. For production, you can still override any value using process.env.
-const APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || 'https://script.google.com/macros/s/AKfycbzFlW7yNw1C6bQnSbOs07kXIQPdiMw1jn_t02dgx1-W99ZfnRKtL7w9YwxP82g-LHWf/exec';
+const APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL || 'https://script.google.com/macros/s/AKfycbzdO98nydmTJiEA9PuoEdMeOpU9JI8t9P_JjCPvw0p2RlUJGv6J7N6VfMAhwFRlvCdI/exec';
 const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS || 'http://localhost:5173';
 const GREEN_API_ID_INSTANCE = process.env.GREEN_API_ID_INSTANCE || '7107629494';
 const GREEN_API_TOKEN_INSTANCE = process.env.GREEN_API_TOKEN_INSTANCE || 'c92fd11ef0c2406f9d9d210a115bafdd75eaf2eb47fb40928f';
 const GREEN_API_BASE_URL = (process.env.GREEN_API_BASE_URL || 'https://api.green-api.com').replace(/\/$/, '');
-const COUNSELOR_CONTACT = process.env.COUNSELOR_CONTACT || '8904469596';
+const COUNSELOR_CONTACT = process.env.COUNSELOR_CONTACT || '8050045500';
 const COUNSELOR_NAME = process.env.COUNSELOR_NAME || 'Benson K Sunny';
 
 // Middleware
